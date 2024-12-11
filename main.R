@@ -1,4 +1,6 @@
-# BECEJ WEEKLY ANALYSIS (ALL YEARS)
+# main.R
+# Bayesian Data Analysis for fitting
+# Weekly pollen concentrations over multiple years
 
 if (!require(tidybayes)) {
   install.packages("tidybayes")
@@ -59,7 +61,10 @@ if(!require(fpp2)){
   install.packages("fpp2")  # if you haven't already
   library(fpp2)
 }
-
+if(!require(scales)){
+  install.packages("scales")  # if you haven't already
+  library(scales)
+}
 
 
 # Read the csv file
@@ -68,62 +73,66 @@ becej_weekly_data <- read.csv("data/final_data/becej_weekly.csv", encoding = "UT
 data <- becej_weekly_data %>% mutate(across(c('y'), round))
 
 # Define the model formula
-formula <- bf(y ~ 1 + (1 + week| year),
+formula <- bf(y ~ 1 + (1 | year),
               family = "poisson")
-
-
-# If we chose normal(0, 1) the model would diverge
-
 
 (priors <- c(
   prior( # population-level intercept
-    normal(0, 1000), 
+    normal(0, 10), 
     class = "Intercept"
   ),
   prior( # group-level intercept
-    normal(0, 1000),
+    normal(0, 10),
     class = "sd",
     group = "year",
     coef = "Intercept"
-  ),
-  prior( # group-level intercept
-    normal(0, 1000),
-    class = "sd",
-    group = "year",
-    coef = "week"
-  )
+  )#,
+  #prior( # group-level intercept
+  #  normal(0, 10),
+  #  class = "sd",
+  #  group = "year",
+  #  coef = "week"
+  #)
 ))
 
 
 # Fit the model
-fit_norm10 <- brm(formula,
-           data = data,
-           prior = priors,
-           seed = 4911,
-           iter = 4000,
-           control = list(adapt_delta = 0.92)
-           )
+fit <- brm(formula,
+          data = data,
+          prior = priors,
+          seed = 4911,
+          iter = 4000,
+          control = list(adapt_delta = 0.92)
+)
 
-summary(fit_norm10)
+
+# Print the summary of the fit
+summary(fit)
 
 
 # Generate posterior predictive samples
-posterior_preds <- posterior_predict(fit_norm10)
+posterior_preds <- posterior_predict(fit)
 
 
 # Summarize the posterior predictions
 data_with_preds <- data %>%
     mutate(
-        pred_mean = round(apply(posterior_preds, 2, mean)),
+        pred_median = round(apply(posterior_preds, 2, median)),
         pred_lower = apply(posterior_preds, 2, quantile, 0.025),
         pred_upper = apply(posterior_preds, 2, quantile, 0.975)
     )
 
 
-# Posterior predictive plotting
 
+# -------------------------Plotting------------------------------
+
+
+# The time range being plot
 years <- 2016:2024
 weeks <- 1:53
+
+
+# Create a grid of all weeks and year combinations
 
 all_week_years <- expand.grid(year = years, week = weeks) %>%
   mutate(week_year = paste(week, year, sep = "_")) %>%
@@ -140,47 +149,56 @@ data_with_preds_full <- all_week_years %>%
 
 data_with_preds_full$week_year <- factor(data_with_preds_full$week_year, levels = unique(data_with_preds_full$week_year))
 
+# Extract week_year values
+selected_labels <- all_week_years[grep("^(1_|18_|36_)", all_week_years)]
+
+
+
+# Custom function to create multi-line x-axis labels
+multi_line_labels <- function(week_year) {
+  
+
+  # Create an empty output array
+  # years <- numeric(length(week_year))
+  years <- rep("", length(week_year))
+  
+  print(years)
+  
+  # Loop through the input array and check the first three characters
+  # Place a year label only below '18'
+  week18_indices <- substr(week_year, 1, 3) == "18_"
+  years[week18_indices] <- substr(week_year[week18_indices], 4, 7)
+  
+  # Extract the week
+  week_part <- as.numeric(sapply(strsplit(week_year, "_"), `[`, 1))
+  
+  print(week18_indices)
+  print(years)
+  
+  paste(week_part, years, sep = "\n")
+}
 
 
 
 
-
-# Extract labels for February each year for the x-axis
-selected_labels <- all_week_years[substr(all_week_years, 1, 1) == "8"]
-
-# Define the new labels
-new_labels <- c('Feb 2016', 'Feb 2017', 'Feb 2018', 'Feb 2019', 'Feb 2020', 'Feb 2021', 'Feb 2022', 'Feb 2023', 'Feb 2024')
-
-
-
-# Define the legend labels
-legend_labels <- c("Original Data", "Posterior Predictive")
 
 # Create the plot with adjusted aesthetics and legend
-ggplot(data_with_preds_full, aes(x = week_year, y = y, group=year)) +
+ggplot(data_with_preds_full, aes(x = week_year, y = y, group = year)) +
   geom_point(na.rm = TRUE) +  # Original data points
-  geom_line(aes(y = pred_mean), color = "red", size = 1, na.rm = TRUE) +  # Posterior mean
+  geom_line(aes(y = pred_median), color = "red", size = 1, na.rm = TRUE) +  # Posterior mean
   geom_ribbon(data = na.omit(data_with_preds_full),  # Temporarily remove rows with missing values
               aes(ymin = pred_lower, ymax = pred_upper),
               fill = "red", alpha = 0.2) +
-  scale_x_discrete(breaks = selected_labels, labels = new_labels) +  # Place the new labels on the x-axis using the selected week years
+  scale_x_discrete(
+    breaks = selected_labels,
+    labels = multi_line_labels
+  ) +  # Place the new labels on the x-axis using the selected week years
   labs(
-    title = "Posterior Predictive Distribution and Original Data",
-    x = "Date",
-    y = "Pollen Concentration (grains/m^3)"
+    title = "Weekly Measurement from 2016 to 2024", # Posterior Predictive Distribution and 
+    x = "Week_Year",
+    y = "Pollen Concentration (grains/m^3)",
   ) +
-  theme_minimal() +  # Minimal theme
-  theme(
-    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),  # Increase x-axis tick font size and angle
-    axis.text.y = element_text(size = 12),  # Increase y-axis tick font size
-    axis.title.x = element_text(size = 14),  # Increase x-axis label font size
-    axis.title.y = element_text(size = 14),  # Increase y-axis label font size
-    plot.title = element_text(size = 16, face = "bold"),  # Increase title font size and weight
-    legend.position = "top",  # Set legend position to top
-    legend.title = element_blank(),  # Remove legend title
-    legend.text = element_text(size = 12),  # Increase legend font size
-    legend.background = element_rect(fill = "white", color = "black"),  # Style legend background
-    legend.box.margin = margin(5, 5, 5, 5)  # Add margin around the legend
-  ) +
-  guides(color = guide_legend(title = NULL, override.aes = list(shape = c(16, NA), linetype = c(0, 1)), 
-                              labels = legend_labels))  # Add and style legend
+  theme(axis.text=element_text(size=13),
+           axis.title=element_text(size=15,face="bold"),
+        plot.title = element_text(size = 16, face = "bold")
+  )
